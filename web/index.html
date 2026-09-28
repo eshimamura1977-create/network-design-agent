@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Network Design Workbench</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css"><script src="app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/"><span class="brand-mark">N<span>W</span></span><span>NETWORK<br><b>WORKBENCH</b></span></a>
+    <div class="side-label">設計ワークスペース</div>
+    <nav aria-label="工程">
+      <button data-tab="requirements" class="nav-item active"><span>01</span>資料と要件<span class="nav-count" id="req-count">0</span></button>
+      <button data-tab="design" class="nav-item"><span>02</span>設計データ<span class="nav-count" id="device-count">0</span></button>
+      <button data-tab="validation" class="nav-item"><span>03</span>検証と承認</button>
+      <button data-tab="outputs" class="nav-item"><span>04</span>成果物</button>
+    </nav>
+    <div class="side-note"><div class="side-label">この試作の対象</div><strong>小規模オフィス LAN</strong><p>C9200L · IOS XE 17系<br>L2 / VLAN / 管理SVI</p><span class="outline-badge">LOCAL PROTOTYPE</span></div>
+    <button class="connection-link" id="connection-button">接続設定と対応範囲 <span>↗</span></button>
+    <div class="sidebar-bottom">Network Design Workbench<br><span>Version 0.3.1 · ローカル実行</span></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><div class="breadcrumb">ワークスペース <span>/</span> ネットワーク設計</div><div class="status-group"><span class="local-status">● ローカル</span><button id="ai-badge" class="ai-badge">AI 接続を確認中</button></div></header>
+    <main>
+      <div class="project-bar"><div class="project-picker"><label for="project-select">案件</label><select id="project-select" aria-label="案件を選択"><option>読み込み中</option></select><span id="revision" class="revision"></span></div><div class="actions"><button id="new-project" class="button">＋ 新しい案件</button><button id="sample-project" class="button">サンプルを開く</button><button id="save-project" class="button primary" disabled>保存済み</button></div></div>
+      <div id="message" role="status" aria-live="polite" hidden></div>
+      <div id="content"><div class="notice">接続を確認しています。ファイルを直接開いている場合は <a href="http://127.0.0.1:8080">HTTPの設計支援画面を開く</a> を選択してください。</div></div>
+      <footer class="main-footer"><span>原文の根拠 → 共通の設計データ → 検証 → 成果物</span><span>自動的な実機接続・設定投入は行いません</span></footer>
+    </main>
+  </div>
+  <dialog id="new-dialog"><form id="new-form"><div class="eyebrow">NEW PROJECT</div><h2>新しい設計案件</h2><label for="new-name">案件名</label><input id="new-name" name="name" maxlength="100" required placeholder="例：本社オフィス LAN 更改"><div class="dialog-actions"><button type="button" id="cancel-new" class="button">キャンセル</button><button class="button primary" type="submit">作成する</button></div></form></dialog>
+  <dialog id="connection-dialog">
+    <div class="eyebrow">AI CONNECTION</div><h2>AI接続設定</h2>
+    <label for="ai-provider">要件整理に使用するAI</label>
+    <select id="ai-provider"><option value="m365">Microsoft 365 Copilot（プレビュー）</option><option value="ai">Chat Completions互換API</option></select>
+    <div id="connection-info" aria-live="polite"></div>
+    <section id="m365-settings">
+      <p>会社のEntra IDに登録したアプリの情報を入力してください。パスワード・クライアントシークレットは不要です。</p>
+      <form id="m365-config-form">
+        <div class="field"><label for="m365-tenant">ディレクトリ（テナント）ID</label><input id="m365-tenant" required autocomplete="off" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" maxlength="36"></div>
+        <div class="field"><label for="m365-client">アプリケーション（クライアント）ID</label><input id="m365-client" required autocomplete="off" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" maxlength="36"></div>
+        <div class="field"><label for="m365-redirect">登録するリダイレクトURI</label><input id="m365-redirect" readonly></div>
+        <button class="button" type="submit">登録情報を保存</button>
+      </form>
+      <details class="negative-space"><summary>管理者に依頼する内容</summary><p>単一テナントのアプリを登録し、「モバイルとデスクトップ アプリ」に上記URIを追加してください。Graphの次の委任権限はChat APIの必須条件です。管理者に利用範囲を確認してもらってください。</p><p><code>Sites.Read.All / Mail.Read / People.Read.All / OnlineMeetingTranscript.Read.All / Chat.Read / ChannelMessage.Read.All / ExternalItem.Read.All</code></p></details>
+      <div class="notice warning">Chat APIはプレビューです。サインインで必須のGraph権限を要求します。案件の資料は「M365 Copilotで要件を整理」を押した場合だけ送信します。Web検索は無効にしますが、Copilotの社内検索機能自体を無効化する設定ではありません。</div>
+      <div class="actions"><button id="m365-login" class="button primary">Microsoftにサインイン</button><button id="m365-test" class="button">接続テスト</button><button id="m365-logout" class="button">このアプリからサインアウト</button></div>
+      <p class="subtext">認証情報はこのアプリのメモリ内だけに保持します。再起動後は再サインインが必要です。Microsoft全体からのサインアウトは行いません。</p>
+    </section>
+    <section id="compatible-settings" hidden><p><code>.env</code> の <code>LLM_BASE_URL</code> と <code>LLM_MODEL</code>、必要に応じて <code>LLM_API_KEY</code> を設定して再起動してください。</p><p>外部HTTPS APIへ接続する場合は、承認された処理先に限り <code>ALLOW_REMOTE_LLM=true</code> を設定します。</p></section>
+    <p id="connection-message" class="notice" hidden role="status"></p>
+    <div class="dialog-actions"><button id="close-connection" class="button primary">閉じる</button></div>
+  </dialog>
+</body>
+</html>
