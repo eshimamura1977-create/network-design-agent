@@ -22,6 +22,7 @@ from .domain import Project, Requirement, sample_project, validate_project
 from .exports import export_bundle, topology_svg
 from .store import Conflict, Store
 from .m365 import M365Connection, COOKIE_NAME, SESSION_SECONDS
+from .design_report import generate_design_report, prepare_input
 
 ROOT=Path(__file__).resolve().parent.parent
 MAX_BODY=12*1024*1024
@@ -173,13 +174,13 @@ def create_handler(store: Store, allowed_hosts: set[str], m365=None):
                 return self.send(200,file.read_bytes(),content_type)
             if path=="/api/health" and self.command=="GET":
                 settings=llm_settings()
-                return self.send(200,{"app":"network-design-workbench","version":"0.3.1","input_formats":list(SUPPORTED_EXTENSIONS),"ai":{"configured":settings["configured"],"local":settings["local"],"model":settings["model"]},"m365":m365.status(self.session_id()),"capabilities":["requirements","l2-validation","docx","xlsx","pptx-input","vsdx-input","svg","vsdx-experimental","config-draft","m365-copilot-preview"]})
+                return self.send(200,{"app":"network-design-workbench","version":"0.4.0","input_formats":list(SUPPORTED_EXTENSIONS),"ai":{"configured":settings["configured"],"local":settings["local"],"model":settings["model"]},"m365":m365.status(self.session_id()),"capabilities":["requirements","requirements-to-word","l2-validation","docx","xlsx","pptx-input","vsdx-input","svg","vsdx-experimental","config-draft","m365-copilot-preview"]})
             if path=="/api/projects":
                 if self.command=="GET": return self.send(200,store.list())
                 body=self.body()
                 p=sample_project() if body.get("sample") else Project(name=body.get("name","新しいネットワーク案件")).model_dump()
                 return self.send(201,store.create(p))
-            match=re.fullmatch(r"/api/projects/([a-f0-9]{32})(?:/(sources|analyze|validate|approve|generate|jobs|topology))?",path)
+            match=re.fullmatch(r"/api/projects/([a-f0-9]{32})(?:/(sources|analyze|validate|approve|generate|design-document|jobs|topology))?",path)
             if match:
                 ident,action=match.groups(); snapshot=store.get(ident)
                 if self.command=="GET":
@@ -221,6 +222,25 @@ def create_handler(store: Store, allowed_hosts: set[str], m365=None):
                         result["base_revision"]=snapshot["revision"]
                         return result
                     return self.submit(ident,"analysis",analyze)
+                if action=="design-document":
+                    if type(body.get("revision")) is not int:
+                        raise ApiError("生成対象の版番号が必要です")
+                    report_snapshot, report_sources = store.design_inputs(ident, body["revision"])
+                    prepare_input(report_snapshot, report_sources)
+                    mode = body.get("mode", "local")
+                    if mode not in ("local", "ai", "m365"):
+                        raise ApiError("設計書の生成モードが不正です")
+                    if mode == "ai" and not llm_settings()["configured"]:
+                        raise ApiError("AI未接続です。接続設定を確認するか、ローカルのドラフト作成を選んでください。")
+                    sid = self.session_id()
+                    if mode == "m365" and not m365.status(sid)["authenticated"]:
+                        raise ApiError("M365 Copilotへサインインしてください。", 401)
+                    def design_document(job):
+                        chat = (lambda prompt, context: m365.chat(sid, prompt, context)) if mode == "m365" else None
+                        result = generate_design_report(report_snapshot, report_sources,
+                            store.root / "design-documents" / (job + ".docx"), mode, chat)
+                        return {**result, "download_url": f"/api/jobs/{job}/download"}
+                    return self.submit(ident, "design-document", design_document)
                 if action=="validate": return self.send(200,{"revision":snapshot["revision"],"findings":validate_project(snapshot["project"])})
                 if action=="approve":
                     if body.get("revision")!=snapshot["revision"]: raise Conflict("承認対象の版が更新されました")
@@ -238,7 +258,11 @@ def create_handler(store: Store, allowed_hosts: set[str], m365=None):
                 ident,action=match.groups(); job=store.job(ident)
                 if self.command=="GET" and not action: return self.send(200,job)
                 if self.command=="GET" and action=="download":
-                    if job["kind"]!="export" or job["status"]!="completed": raise ApiError("成果物はまだ完成していません",409)
+                    if job["status"]!="completed": raise ApiError("成果物はまだ完成していません",409)
+                    if job["kind"]=="design-document":
+                        file=store.root/"design-documents"/(ident+".docx")
+                        return self.send(200,file.read_bytes(),"application/vnd.openxmlformats-officedocument.wordprocessingml.document",f"network-basic-design-v{job['result']['revision']}.docx")
+                    if job["kind"]!="export": raise ApiError("ダウンロード対象の成果物ではありません",409)
                     file=store.root/"exports"/(ident+".zip")
                     return self.send(200,file.read_bytes(),"application/zip",f"network-design-v{job['result']['revision']}.zip")
                 if self.command=="POST" and action=="apply":

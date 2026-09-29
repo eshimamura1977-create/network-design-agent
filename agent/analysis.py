@@ -100,3 +100,39 @@ requirementsは400件以内。すべての要件に根拠引用が必要です�
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise ValueError("AI接続先のリダイレクトは禁止しています。正しいAPI URLを設定してください。")
+
+
+def design_chat_json(system, context, chat=None):
+    """Bounded JSON transport for design drafting; never silently fall back."""
+    settings = llm_settings()
+    if chat is None and not settings["configured"]:
+        raise ValueError("AI未接続です。接続設定を確認してください。")
+    try:
+        if chat is not None:
+            content = chat(system, context)
+        else:
+            payload = dict(model=settings["model"], temperature=0.1, messages=[
+                dict(role="system", content=system), dict(role="user", content=context)])
+            headers = {"Content-Type": "application/json"}
+            if os.environ.get("LLM_API_KEY"):
+                headers["Authorization"] = "Bearer " + os.environ["LLM_API_KEY"]
+            request = urllib.request.Request(settings["base"] + "/chat/completions",
+                data=json.dumps(payload).encode(), headers=headers)
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+            with opener.open(request, timeout=int(os.environ.get("LLM_TIMEOUT", "120"))) as response:
+                raw = response.read(2 * 1024 * 1024 + 1)
+            if len(raw) > 2 * 1024 * 1024:
+                raise ValueError("AI応答が上限を超えました。")
+            choice = json.loads(raw)["choices"][0]
+            if choice.get("finish_reason") == "length":
+                raise ValueError("設計案の応答が途中で終了しました。資料を分割してください。")
+            content = choice["message"]["content"]
+        if not isinstance(content, str) or len(content) > 150000:
+            raise ValueError("設計案の応答サイズ・形式が不正です。")
+        return json.loads(re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip()))
+    except urllib.error.HTTPError as error:
+        raise ValueError(f"設計案のAI接続がHTTP {error.code}で失敗しました。") from None
+    except (urllib.error.URLError, TimeoutError):
+        raise ValueError("設計案のAI接続に失敗しました。接続先と通信設定を確認してください。") from None
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+        raise ValueError("設計案のAI応答形式が不正です。Wordは生成しませんでした。") from None

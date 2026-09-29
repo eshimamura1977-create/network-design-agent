@@ -88,6 +88,20 @@ class Store:
             db.execute("INSERT INTO sources VALUES(?,?,?,?,?)", (sid, ident, name, body, now()))
         return sid
 
+    def design_inputs(self, ident, revision):
+        """Read the project and its immutable source bodies in one DB snapshot."""
+        with self.connect() as db:
+            db.execute("BEGIN")
+            row = db.execute("SELECT * FROM projects WHERE id=?", (ident,)).fetchone()
+            if row is None:
+                raise KeyError("案件が見つかりません")
+            if row["revision"] != revision:
+                raise Conflict("設計書の生成対象が更新されています。最新の版で再実行してください。")
+            sources = [dict(s) for s in db.execute("SELECT * FROM sources WHERE project=? ORDER BY created", (ident,))]
+            snapshot = dict(id=row["id"], revision=row["revision"], approved_revision=row["approved"],
+                updated=row["updated"], project=json.loads(row["body"]))
+        return snapshot, sources
+
     def job(self, ident):
         with self.connect() as db:
             r = db.execute("SELECT * FROM jobs WHERE id=?", (ident,)).fetchone()
