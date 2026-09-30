@@ -18,7 +18,7 @@
     </nav>
     <div class="side-note"><div class="side-label">この試作の対象</div><strong>小規模オフィス LAN</strong><p>C9200L · IOS XE 17系<br>L2 / VLAN / 管理SVI</p><span class="outline-badge">LOCAL PROTOTYPE</span></div>
     <button class="connection-link" id="connection-button">接続設定と対応範囲 <span>↗</span></button>
-    <div class="sidebar-bottom">Network Design Workbench<br><span>Version 0.4.0 · ローカル実行</span></div>
+    <div class="sidebar-bottom">Network Design Workbench<br><span>Version 0.5.0 · ローカル実行</span></div>
   </aside>
   <div class="workspace">
     <header class="topbar"><div class="breadcrumb">ワークスペース <span>/</span> ネットワーク設計</div><div class="status-group"><span class="local-status">● ローカル</span><button id="ai-badge" class="ai-badge">AI 接続を確認中</button></div></header>
@@ -44,7 +44,7 @@
         <button class="button" type="submit">登録情報を保存</button>
       </form>
       <details class="negative-space"><summary>管理者に依頼する内容</summary><p>単一テナントのアプリを登録し、「モバイルとデスクトップ アプリ」に上記URIを追加してください。Graphの次の委任権限はChat APIの必須条件です。管理者に利用範囲を確認してもらってください。</p><p><code>Sites.Read.All / Mail.Read / People.Read.All / OnlineMeetingTranscript.Read.All / Chat.Read / ChannelMessage.Read.All / ExternalItem.Read.All</code></p></details>
-      <div class="notice warning">Chat APIはプレビューです。サインインで必須のGraph権限を要求します。「M365 Copilotで要件を整理」または「M365 Copilotで設計案を生成」を押すと資料を送信します。設計案の生成では案件名と要件一覧も送信します。Web検索は無効にしますが、Copilotの社内検索機能自体を無効化する設定ではありません。</div>
+      <div class="notice warning">Chat APIはプレビューです。サインインで必須のGraph権限を要求します。「M365 Copilotで要件を整理」または「M365 Copilotで設計案を生成」を押すと資料を送信します。設計案の生成では案件名と要件一覧も送信します。「AIで全工程を生成」では、それらと中間の設計案を4段階で送信します。Web検索は無効にしますが、Copilotの社内検索機能自体を無効化する設定ではありません。</div>
       <div class="actions"><button id="m365-login" class="button primary">Microsoftにサインイン</button><button id="m365-test" class="button">接続テスト</button><button id="m365-logout" class="button">このアプリからサインアウト</button></div>
       <p class="subtext">認証情報はこのアプリのメモリ内だけに保持します。再起動後は再サインインが必要です。Microsoft全体からのサインアウトは行いません。</p>
     </section>

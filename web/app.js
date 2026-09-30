@@ -46,6 +46,7 @@ function render() {
   }
   $('#content').innerHTML=({requirements:requirementsView,design:designView,validation:validationView,outputs:outputsView})[state.tab]();
   if(state.tab==='outputs')$('#content').insertAdjacentHTML('afterbegin',designDocumentView());
+  if(['requirements','outputs'].includes(state.tab))$('#content').insertAdjacentHTML('afterbegin',pipelineView());
   refreshAiControls();
 }
 function requirementsView() {
@@ -53,6 +54,16 @@ function requirementsView() {
   return heading('01','資料から、要件を明確に。','原文を取り込み、抽出した候補を確認して設計の前提を揃えます。')+metrics()+designDocumentView()+`<div class="grid-two"><div><section class="card"><div class="card-head"><h2>入力資料</h2><span>${state.sources.length} 件</span></div><div class="card-body"><label class="upload-area"><input id="upload" type="file" accept=".txt,.md,.csv,.cfg,.log,.docx,.xlsx,.pptx,.vsdx,.vdx,.pdf" multiple><span class="upload-symbol">↑</span><strong>ファイルを選択して取り込む</strong><small>Word · Excel · PowerPoint · Visio · PDF · テキスト / 各8MBまで</small></label><div class="divider-label">またはテキストを貼り付け</div><div class="field"><label class="label" for="source-name">資料名</label><input id="source-name" value="ヒアリングメモ.txt" maxlength="150"></div><div class="field"><label class="label" for="source-text">要件・現行情報</label><textarea id="source-text" rows="5" placeholder="例：業務端末とゲスト端末を分離する。&#10;管理通信にはVLAN 99を使用する。"></textarea></div><button class="button full-button" data-action="add-source">資料を登録</button>${state.sources.map(s=>`<div class="source-item"><details class="source-row"><summary><span>▤ ${esc(s.name)}</span><small>${s.body.length.toLocaleString()} 文字</small></summary><pre>${esc(s.body)}</pre></details><button class="button small danger" data-action="delete-source" data-source="${esc(s.id)}" aria-label="${esc(s.name)}を入力資料から削除">削除</button></div>`).join('')}<div class="notice">対応：.docx / .xlsx / .pptx / .vsdx / .vdx / .txt 等。PPTXは文字・表・ノート、Visioは図形文字・属性・登録済み接続情報を抽出します。<details><summary>取込範囲と旧形式について</summary>画像のOCR、SmartArt・グラフ・埋込ファイルの読解、線の見た目による接続推定、Visioマスターの継承文字・属性、Wordヘッダー・脚注・テキストボックスは未対応です。Excelはセルと数式・保存済み値を取り込み、再計算は行いません。非表示のスライド・シートとノートも取込対象です。旧形式 .doc / .xls / .ppt / .vsd は元のアプリで現行形式へ保存し直してください。各8MB・抽出16万字まで。</details></div></div><div class="section-actions"><button class="button" data-action="analyze-local" ${!state.sources.length?'disabled':''}>ローカルで候補抽出</button><button class="button primary" data-action="analyze-ai" ${!state.health?.ai.configured || !state.sources.length?'disabled':''}>AIで要件を整理</button></div></section>${analysisJobsView()}</div><section class="card"><div class="card-head"><h2>要件一覧</h2><button class="text-button" data-action="add-requirement">＋ 手入力で追加</button></div>${p.requirements.length?p.requirements.map((r,i)=>`<article class="requirement"><div class="requirement-top"><span class="req-id">${esc(r.id)} <span class="subtext">${esc(r.category)}</span></span><div class="actions">${select(`requirements.${i}.status`,r.status,[['candidate','候補'],['confirmed','確認済み'],['unresolved','未決']])}<button class="text-button" data-action="remove-requirement" data-index="${i}" aria-label="${esc(r.id)}を削除">×</button></div></div><textarea aria-label="${esc(r.id)} 要件" data-path="requirements.${i}.text" rows="2">${esc(r.text)}</textarea><details><summary>根拠：${esc(r.source)}</summary><div class="quote">${esc(r.quote || '手入力のため引用未登録')}</div></details></article>`).join(''):empty('要件はまだありません','資料を登録して候補を抽出するか、要件を手入力してください。')}<div class="section-actions"><span class="subtext">候補は原文と照合し、各行を「確認済み」に変更します。</span></div></section></div>`;
 }
 
+function pipelineView() {
+  const jobs=state.jobs.filter(j=>j.kind==='pipeline');
+  const pending=jobs.some(j=>['queued','running'].includes(j.status));
+  const ready=state.provider==='m365'?state.health?.m365?.authenticated:state.health?.ai?.configured;
+  return `<section class="card"><div class="card-head"><h2>AIで全工程のドラフトを一括生成</h2><span>Word・Excel・Visio・Config案</span></div><div class="card-body"><p>共通の設計データから、要件・基本／詳細設計・パラメータ・構成図・Config案・試験・移行・工事・運用引継ぎをZIPで作成します。</p><p class="subtext">設計 → 文書化 → 下流工程 → AIレビューの4段階。生成完了後も未承認です。機種・OSが未決の機器はConfig作成待ちとして出力します。既存の設計データへは自動反映されません。</p><button class="button primary" data-action="pipeline" ${!ready || !state.current.project.requirements.length || pending?'disabled':''}>AIで全工程を生成</button><p class="subtext">${!ready?'AI未接続です。「接続設定と対応範囲」で登録・サインインを行ってください。':'案件名・要件・資料本文・中間の設計案を、選択中のAIへ4回に分けて送信します。数分以上かかる場合があります。'} 要件一覧の登録が必要です。入力本文は合計5万字まで。</p></div>${jobs.map(j=>{
+    const r=j.result;
+    const old=r.revision!==state.current.revision || JSON.stringify((r.sources||[]).map(s=>s.id).sort())!==JSON.stringify(state.sources.map(s=>s.id).sort());
+    return `<div class="job"><div class="job-header"><strong>全工程ドラフト ${r.revision?`v${r.revision}`:''}</strong>${badge(j.status)}</div>${j.status==='completed'?`<p>要レビュー · 機器 ${r.nodes}台 · 試験 ${r.tests}項目 · 未決・指摘 ${r.open_items}件 · 重大指摘 ${r.blocking}件</p><p class="subtext">Config案 ${r.config_drafts}件／作成待ち ${r.config_deferred}件${old?' · 過去の入力から生成':''}</p><a class="button primary" href="${esc(r.download_url)}" download>全工程ドラフトをダウンロード ↓</a><p class="subtext">最初に「12_要件対応とレビュー.xlsx」の未決事項・AIレビューを確認してください。</p>`:j.status==='failed'?`<p class="notice warning">${esc(r.error)}</p>`:`<p>${esc(r.stage||'処理を開始しています')}</p>`}</div>`;
+  }).join('')}</section>`;
+}
 function designDocumentView() {
   const hasInput=state.sources.length || state.current.project.requirements.length;
   const aiReady=state.provider==='m365'?state.health?.m365?.authenticated:state.health?.ai?.configured;
@@ -164,6 +175,13 @@ async function action(name,el) {
   }else if(name==='remove-link'){d.links.splice(i,1);dirty();render();
   }else if(name==='validate'){await save();state.findings=(await api(projectPath('/validate'),{})).findings;render();message('登録された設計データの静的検査が完了しました。');
   }else if(name==='approve'){await save();state.current=await api(projectPath('/approve'),{revision:state.current.revision});render();message(`v${state.current.revision}を承認しました。成果物からConfigの下書きを生成できます。`);
+  }else if(name==='pipeline'){
+    const projectId=state.current.id;
+    await save();
+    if(state.current.id!==projectId)throw new Error('案件が切り替わりました。対象の案件で再実行してください。');
+    await api(projectPath('/pipeline'),{revision:state.current.revision,mode:state.provider});
+    state.jobs=await api(projectPath('/jobs'));render();schedulePoll();
+    message('全工程のドラフト作成を開始しました。進捗とレビュー結果をこの欄に表示します。');
   }else if(name.startsWith('design-document-')){
     const projectId=state.current.id;
     await save();
@@ -212,6 +230,8 @@ $('#cancel-new').addEventListener('click',()=>$('#new-dialog').close());
 $('#new-form').addEventListener('submit',event=>{event.preventDefault();execute(async()=>{await create(false,$('#new-name').value);$('#new-dialog').close();});});
 function refreshAiControls(){
   const m=state.health?.m365;
+  const pipelineButton=$('[data-action="pipeline"]');
+  if(pipelineButton)pipelineButton.disabled=!state.current?.project.requirements.length || !(state.provider==='m365'?m?.authenticated:state.health?.ai?.configured) || state.jobs.some(j=>j.kind==='pipeline' && ['queued','running'].includes(j.status));
   $('#ai-badge').textContent=state.provider==='m365'?(m?.authenticated?'M365 サインイン済み':m?.configured?'M365 要サインイン':'M365 未設定'):(state.health?.ai.configured?'AI 設定済み':'AI 未接続');
   const button=$('[data-action="analyze-ai"]');
   if(button){button.textContent=state.provider==='m365'?'M365 Copilotで要件を整理':'AIで要件を整理';button.disabled=!state.sources.length || !(state.provider==='m365'?m?.authenticated:state.health?.ai.configured);}
