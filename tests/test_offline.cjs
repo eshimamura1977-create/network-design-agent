@@ -1,0 +1,43 @@
+/* Run with Node. No network or external test framework. */
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
+global.crypto=require('node:crypto').webcrypto;
+global.JSZip=require('../offline/vendor/jszip.min.js');
+global.NWCore=require('../offline/core.js');
+const Export=require('../offline/exporters.js');
+const Import=require('../offline/importers.js');
+const demo=require('../offline/demo.js');
+const copy=NWCore.clone;
+async function main(){
+  let checks=0;
+  const test=(name,fn)=>{fn();checks++;console.log('OK '+name);};
+  const {project:p,workflow:w}=demo();
+  test('valid complete sample',()=>{NWCore.project(p);NWCore.validateStages(w.stages,p);});
+  test('network overlaps blocked',()=>{const b=copy(w.stages.architecture);b.networks[1].cidr=b.networks[0].cidr;assert.throws(()=>NWCore.architecture(b,p),/重複/);});
+  test('management gateway collision blocked',()=>{const b=copy(w.stages.architecture);b.nodes[0].management_ip=b.networks[0].gateway;assert.throws(()=>NWCore.architecture(b,p),/ゲートウェイ/);});
+  test('unknown evidence blocked',()=>{const b=copy(w.stages.architecture);b.nodes[0].evidence=[{source_id:'SRC1',quote:'存在しない引用'}];assert.throws(()=>NWCore.architecture(b,p),/引用/);});
+  test('missing requirement coverage blocked',()=>{const b=copy(w.stages.delivery);b.coverage.pop();assert.throws(()=>NWCore.delivery(b,w.stages.architecture,p),/全要件/);});
+  test('unidentified config commands blocked',()=>{const b=copy(w.stages.delivery);b.configs[0].status='draft';b.configs[0].text='hostname EXAMPLE';assert.throws(()=>NWCore.delivery(b,w.stages.architecture,p),/機種/);});
+  test('deferred config commands blocked',()=>{const b=copy(w.stages.delivery);b.configs[0].text='hostname EXAMPLE';assert.throws(()=>NWCore.delivery(b,w.stages.architecture,p),/作成待ち/);});
+  test('invalid test target blocked',()=>{const b=copy(w.stages.delivery);b.tests[0].targets=['UNKNOWN'];assert.throws(()=>NWCore.delivery(b,w.stages.architecture,p),/対象機器/);});
+  test('IPv6 canonical/invalid addresses',()=>{assert.equal(NWCore.ip('2001:db8::1').v,NWCore.ip('2001:0db8:0:0:0:0:0:1').v);assert.throws(()=>NWCore.net('2001:db8::1/64'));assert.throws(()=>NWCore.ip('01.2.3.4'));});
+  test('wrong request and revision blocked',()=>{const s=NWCore.start(p),answer=JSON.stringify({request_id:'wrong',stage:'architecture',data:w.stages.architecture});assert.throws(()=>NWCore.accept(s,p,answer),/一致/);assert.throws(()=>NWCore.accept({...s,revision:0},p,answer),/更新/);});
+  test('four-stage manual roundtrip + prompt split',()=>{let current=NWCore.start(p);for(const stage of NWCore.steps){const chunks=NWCore.prompts(current,p);assert(chunks.length);assert(chunks.every(c=>c.length<9400));current=NWCore.accept(current,p,JSON.stringify({request_id:current.request_id,stage,data:w.stages[stage]}));}assert.equal(Object.keys(current.stages).length,4);assert.deepEqual(NWCore.prompts(current,p),[]);});
+  test('save/restore and stage order',()=>{const saved={format:'network-design-browser',version:1,project:p,workflow:w};assert.deepEqual(NWCore.restore(JSON.stringify(saved)),{project:p,workflow:w});const bad=copy(saved);delete bad.workflow.stages.design;assert.throws(()=>NWCore.restore(JSON.stringify(bad)),/前段階/);});
+  test('unknown schema field blocked',()=>{const b=copy(w.stages.architecture);b.run='execute';assert.throws(()=>NWCore.architecture(b,p),/未定義/);});
+  test('omitted collection produces a clear required-field error',()=>{const b=copy(w.stages.architecture);delete b.parameters;assert.throws(()=>NWCore.architecture(b,p),/parameters: 必須項目/);});
+  test('oversized AI input is not silently truncated',()=>{const b=copy(p);b.sources[0].body='a'.repeat(50001);assert.throws(()=>NWCore.start(b),/5万字/);});
+  const original=JSON.stringify({p,w}),data=await Export.bundle(p,w),z=await JSZip.loadAsync(data);
+  test('all lifecycle outputs and no raw cfg',()=>{for(const f of ['01_要件定義書.docx','02_基本設計書.docx','02b_詳細設計書.docx','03_パラメータシート.xlsx','04_構成図.vsdx','04_構成図.svg','06_試験設計書.docx','07_試験構成図.vsdx','08_試験項目表.xlsx','09_移行設計書.docx','10_工事資料.xlsx','11_運用引継ぎ資料.docx','12_要件対応・レビュー.xlsx'])assert(z.file(f),f);assert(!Object.keys(z.files).some(n=>n.endsWith('.cfg')));assert.equal(original,JSON.stringify({p,w}));});
+  const manifest=JSON.parse(await z.file('manifest.json').async('string'));test('draft/sample manifest remains explicit',()=>{assert.equal(manifest.status,'review_required');assert.equal(manifest.sample,true);assert.equal(manifest.config_deferred,13);});
+  const x=await Export.xlsx([{name:'安全性',headers:['値'],rows:[['=HYPERLINK("https://example.invalid")'],['<script>alert(1)</script>']]}]);
+  const xz=await JSZip.loadAsync(x),sheet=await xz.file('xl/worksheets/sheet1.xml').async('string');
+  test('spreadsheet formulas and markup stay text',()=>{assert(sheet.includes('t="inlineStr"'));assert(!sheet.includes('<f>'));assert(sheet.includes('&lt;script&gt;'));});
+  test('zip preflight accepts exported office files',()=>Import.zipCheck(x));
+  test('malformed/encrypted ZIP rejected',()=>{assert.throws(()=>Import.zipCheck(new Uint8Array(40)));const bad=new Uint8Array(x);for(let i=0;i<bad.length-12;i++){if(bad[i]===0x50&&bad[i+1]===0x4b&&bad[i+2]===1&&bad[i+3]===2){bad[i+8]|=1;break;}}assert.throws(()=>Import.zipCheck(bad));});
+  const out=path.resolve(__dirname,'../data/offline-qa');fs.mkdirSync(out,{recursive:true});fs.writeFileSync(path.join(out,'sample.zip'),data);fs.writeFileSync(path.join(out,'formula.xlsx'),x);fs.writeFileSync(path.join(out,'project.json'),JSON.stringify({format:'network-design-browser',version:1,project:p,workflow:w}));
+  fs.writeFileSync(path.join(out,'sample-requirements.txt'),p.sources[0].body);
+  console.log(`${checks} checks passed; QA artifacts: ${out}`);
+}
+main().catch(e=>{console.error(e);process.exitCode=1;});
